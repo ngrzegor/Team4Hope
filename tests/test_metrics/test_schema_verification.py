@@ -1,38 +1,40 @@
 import pytest
-from src.metrics.types import MetricResult
+from src.cli.main import evaluate_url, validate_ndjson
 
-def test_metric_result_roundtrip():
-    # Create an object
-    m = MetricResult(
-        id="test",
-        value=0.9,
-        binary=1,
-        details={"source": "unit"},
-        seconds=0.05,
-    )
-    # Check fields
-    assert m.id == "test"
-    assert m.value == 0.9
-    assert m.binary == 1
-    assert m.details["source"] == "unit"
-    assert m.seconds == pytest.approx(0.05)
+def test_evaluate_url_structure():
+    url = "https://huggingface.co/someuser/somemodel"
+    rec = evaluate_url(url)
 
-def test_metric_result_is_frozen():
-    m = MetricResult("id", 0.1, 0, {}, 0.0)
-    with pytest.raises(Exception):
-        m.id = "changed"  # should raise because frozen=True
+    # Check top-level keys
+    assert "url" in rec
+    assert "scores" in rec
+    assert "overall" in rec
 
-def test_metric_protocol_contract():
-    from typing import Protocol
+    # Scores should be a dict with nested metrics
+    for metric, value in rec["scores"].items():
+        assert isinstance(value, dict)
+        assert "score" in value
+        assert "latency" in value
+        # score must be None or a float between 0 and 1
+        if value["score"] is not None:
+            assert 0 <= value["score"] <= 1
+        # latency must be None or int
+        if value["latency"] is not None:
+            assert isinstance(value["latency"], int)
 
-    # Metric protocol says: class must have id and compute(context) -> MetricResult
-    class DummyMetric:
-        id = "dummy"
-        def compute(self, context):
-            return MetricResult("dummy", 1.0, 1, {}, 0.0)
 
-    d = DummyMetric()
-    result = d.compute({})
-    assert isinstance(result, MetricResult)
-    assert result.id == "dummy"
-    assert result.value == 1.0
+def test_validate_ndjson_valid_record():
+    rec = evaluate_url("https://huggingface.co/someuser/somemodel")
+    assert validate_ndjson(rec)
+
+
+def test_validate_ndjson_invalid_score_type():
+    rec = evaluate_url("https://huggingface.co/someuser/somemodel")
+    rec["scores"]["size"]["score"] = "bad"  # invalid type
+    assert not validate_ndjson(rec)
+
+
+def test_validate_ndjson_invalid_latency_type():
+    rec = evaluate_url("https://huggingface.co/someuser/somemodel")
+    rec["scores"]["size"]["latency"] = "bad"  # invalid type
+    assert not validate_ndjson(rec)
